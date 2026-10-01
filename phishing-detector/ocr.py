@@ -1,29 +1,23 @@
-"""
-ocr_tool.py - partial-screen OCR (crop a dragged rectangle -> text).
+"""ocr.py - partial-screen OCR (crop a dragged rectangle -> text).
 
-From your app:
-    from ocr_tool import extract_text
+    from .ocr import extract_text
     text = extract_text("screenshot.png", box=(x1, y1, x2, y2))
 
-CLI:
-    python ocr_tool.py screenshot.png                    -> whole image
-    python ocr_tool.py screenshot.png 100 200 600 500    -> x1 y1 x2 y2
-
-box = two opposite corners of the dragged rectangle in screenshot pixels
+box = two opposite corners of the selected rectangle in screenshot pixels
 (any drag direction works). box=None reads the whole image.
 """
 import re
-import sys
 import time
 from functools import lru_cache
 
 import cv2
 import easyocr
 import numpy as np
-import torch
 from PIL import Image
 
-MIN_CONF = 0.30        # drop detections EasyOCR is unsure about
+from .config import device
+
+MIN_CONF = 0.30        # drop detections EasyOCR is unsure about (lower it to keep more text)
 MIN_CROP = 16          # reject selections smaller than this many pixels (accidental taps)
 TARGET_HEIGHT = 160    # upscale tiny crops so small text is readable
 VERBOSE = True
@@ -36,7 +30,7 @@ def log(msg):
 
 @lru_cache(maxsize=1)
 def get_reader(langs=("en",)):
-    use_gpu = torch.cuda.is_available()
+    use_gpu = device.type == "cuda"
     log(f"Loading EasyOCR reader for {list(langs)} (GPU: {use_gpu}).")
     log("First run downloads the OCR models (needs internet) and can take a minute - later runs are fast.")
     t = time.time()
@@ -133,16 +127,3 @@ def extract_text(src, box=None, langs=("en",)) -> str:
 def find_urls(text: str):
     """Pull URLs/domains out of OCR text (useful for the phishing side)."""
     return re.findall(r"(?:https?://|www\.)\S+|\b[\w-]+\.(?:com|net|org|in|io|co)\b\S*", text)
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        sys.exit("Usage: python ocr_tool.py <image> [x1 y1 x2 y2]")
-    path = sys.argv[1]
-    box = tuple(map(int, sys.argv[2:6])) if len(sys.argv) >= 6 else None
-    text = extract_text(path, box)
-    print("\n----- EXTRACTED TEXT -----")
-    print(text or "[no text found]")
-    urls = find_urls(text)
-    if urls:
-        print("\nURLs detected:", urls)
