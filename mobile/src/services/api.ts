@@ -1,16 +1,17 @@
 import { fetch } from "expo/fetch";
-import { File } from "expo-file-system";
+import { File as ExpoFile } from "expo-file-system";
 import * as FileSystem from "expo-file-system/legacy";
-// Keep this address aligned with the laptop running FastAPI.
-const API_BASE_URL = "http://192.168.29.197:8000";
+import { Platform } from "react-native";
 
 
 import {
   createImageJSON,
   storeImageJSON,
-  getImageJSON,
   getImageJSONString,
 } from "./imageJson";
+
+// Keep this address aligned with the laptop running FastAPI.
+const API_BASE_URL = "http://172.20.10.4:8000";
 
 export async function convertScreenshotToJSON(
   imageUri: string
@@ -46,6 +47,7 @@ export interface AnalysisSignal {
 }
 
 export interface AnalysisResult {
+  analysis_id?: string;
   status: string;
   extracted_text?: string;
   detected_urls: string[];
@@ -112,14 +114,20 @@ export async function sendScreenshotForAnalysis(
   fileName: string,
   mimeType: string
 ): Promise<AnalysisResult> {
-  const imageFile = new File(imageUri);
   const formData = new FormData();
-
-  formData.append(
-    "image",
-    imageFile as unknown as Blob,
-    fileName || "screenshot.jpg"
-  );
+  if (Platform.OS === "web") {
+    // ImagePicker returns a browser URI; Expo's filesystem File is native-only.
+    const imageResponse = await globalThis.fetch(imageUri);
+    if (!imageResponse.ok) {
+      throw new Error("Unable to read the selected image. Please select it again.");
+    }
+    const blob = await imageResponse.blob();
+    const imageBlob = blob.type || !mimeType ? blob : new Blob([blob], { type: mimeType });
+    formData.append("image", imageBlob, fileName || "screenshot.jpg");
+  } else {
+    const imageFile = new ExpoFile(imageUri);
+    formData.append("image", imageFile as unknown as Blob, fileName || "screenshot.jpg");
+  }
 
   const response = await fetch(`${API_BASE_URL}/api/v1/analyze`, {
     method: "POST",
@@ -161,7 +169,13 @@ export async function sendScreenshotForAnalysis(
     throw new Error("The backend response is missing required analysis fields.");
   }
 
-  void mimeType;
-
   return result;
+}
+export async function submitFeedback(analysisId: string, kind: "wrong_verdict" | "report_scam", evidenceText: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ analysis_id: analysisId, kind, evidence_text: evidenceText }),
+  });
+  if (!response.ok) throw new Error("Unable to submit feedback. Please retry.");
 }

@@ -1,16 +1,18 @@
-"""phishing-detector - screenshot OCR + phishing check.
+"""Screenshot scam screening. Heavy dependencies load only for image analysis."""
 
-From src/main.py (the folder name has a hyphen, so use importlib):
+from .entities import find_urls
 
-    import importlib
-    phishing_detector = importlib.import_module("phishing-detector")
 
-    result = phishing_detector.analyze("screenshot.png", box=(x1, y1, x2, y2))
-    result -> {"text", "urls", "label", "confidence", "probs", "warning"}
+def extract_text(*args, **kwargs):
+    from .ocr import extract_text as run
 
-    text = phishing_detector.extract_text("screenshot.png")   # OCR only
-"""
-from .ocr import extract_text, find_urls
-from .pipeline import analyze
+    return run(*args, **kwargs)
+
+
+def analyze(*args, **kwargs):
+    from .pipeline import analyze as run
+
+    return run(*args, **kwargs)
+
 
 __all__ = ["analyze", "extract_text", "find_urls"]
