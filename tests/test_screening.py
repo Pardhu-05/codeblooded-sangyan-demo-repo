@@ -166,6 +166,26 @@ def test_api_contract_and_errors(tmp_path, monkeypatch):
     )
 
 
+def test_health_and_pasted_text(monkeypatch):
+    monkeypatch.delenv("DETECTION_CONFIG", raising=False)
+    monkeypatch.delenv("TEXT_MODEL_PATH", raising=False)
+    client = TestClient(main.app)
+    assert client.get("/api/v1/health").json()["status"] == "ok"
+    with patch("main.analyze_image") as image_analysis:
+        response = client.post(
+            "/api/v1/analyze-text", json={"text": "Send OTP immediately to bad.example"}
+        )
+    image_analysis.assert_not_called()
+    assert response.status_code == 200
+    result = response.json()
+    assert result["analysis_mode"] == "pasted_text"
+    assert "bad.example" in result["detected_urls"]
+    assert any(e["type"] == "secret_request" for e in result["entities"])
+    assert result["risk"]["level"] == "suspicious"
+    for text in ("", "   ", "x" * 20001):
+        assert client.post("/api/v1/analyze-text", json={"text": text}).status_code == 422
+
+
 def test_feedback_is_pending(tmp_path):
     path = tmp_path / "feedback.db"
     record_feedback("id", "wrong_verdict", "It's legitimate", db_path=path)

@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from phishing_detector.feedback import record_feedback
-from phishing_detector.service import analyze_image
+from phishing_detector.service import analyze_image, analyze_text
 
 app = FastAPI(title="Screenshot scam screening")
 app.add_middleware(
@@ -26,7 +26,7 @@ app.add_middleware(
         ).split(",")
         if origin.strip()
     ],
-    allow_methods=["POST"],
+    allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -36,6 +36,10 @@ log = logging.getLogger(__name__)
 
 class ImagePayload(BaseModel):
     image: str = Field(min_length=1, max_length=14 * 1024 * 1024)
+
+
+class TextPayload(BaseModel):
+    text: str = Field(min_length=1, max_length=20000)
 
 
 class FeedbackPayload(BaseModel):
@@ -67,6 +71,25 @@ def process_image(data):
     except Exception:
         log.exception("Image analysis failed")
         raise HTTPException(503, "Analysis unavailable; please retry")
+
+
+@app.get("/api/v1/health")
+def health_check():
+    """Process liveness only; does not claim OCR or model readiness."""
+    return {"status": "ok", "message": "SANGYAN Shield API is running"}
+
+
+@app.post("/api/v1/analyze-text")
+def analyze_pasted_text(payload: TextPayload):
+    if not payload.text.strip():
+        raise HTTPException(422, "Text must contain non-whitespace characters")
+    try:
+        result = analyze_text(payload.text)
+    except Exception:
+        log.exception("Text analysis failed")
+        raise HTTPException(503, "Analysis unavailable; please retry")
+    result["analysis_mode"] = "pasted_text"
+    return result
 
 
 @app.post("/api/v1/save-image-json")

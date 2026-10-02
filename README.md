@@ -49,6 +49,8 @@ These are fictional examples. Domain membership requires an exact host or a dot-
 
 ## API and feedback
 
+- `GET /api/v1/health`: confirms the API process is running; does not check model readiness.
+- `POST /api/v1/analyze-text`: `{ "text": "<message>" }`; runs entity extraction and the existing text/risk pipeline without OCR. Accepts up to 20,000 characters.
 - `POST /api/v1/analyze`: multipart `image`.
 - `POST /api/v1/save-image-json`: `{ "image": "<base64 or image data URI>" }`; same analysis under `result`.
 - `POST /api/v1/feedback`: `{ "analysis_id": "<UUID>", "kind": "wrong_verdict | report_scam", "note": "optional", "evidence_text": "optional" }`.
@@ -79,3 +81,21 @@ Tests cover confidence, extraction boundaries, secret negation, blocklist overri
 RDAP and Safe Browsing/PhishTank/OpenPhish are explicitly `not_implemented`; no network reputation verdict is fabricated. Add provider adapters with timeouts, caching, provenance and failure statuses before enabling these checks. No suspect URL is visited by the current implementation. A production domain-age implementation needs public-suffix-aware registrable domains rather than a last-two-label approximation.
 
 Next data-dependent work: evaluate representative labeled screenshots; tune false-positive/false-negative thresholds; calibrate learned fusion on separate data; assess whether a transformer improves results. Review/admin workflows and automated confirmed-report export are not yet implemented. Explanations are deterministic structured evidence; no LLM receives screenshot text. General misinformation verification requires claim extraction and corroborating sources as a separate stage.
+
+
+## Local image dataset and first training run
+
+When the outer project is named `codeblooded_sangayan`, keep Python source in `src/` and the image dataset at `data/phishing_dataset/image/`. Configuration prefers that existing local folder; otherwise it falls back to `phishing_detector/.cache/data/` and the configured S3 download. Set the `DATA_DIR` environment variable to override the location. The `url/` spreadsheets are separate data and are not consumed by the image trainer.
+
+From the outer project folder in PowerShell:
+
+```powershell
+.\venv\Scripts\Activate.ps1
+cd src
+python -c "from phishing_detector.config import DATA_DIR, device; print('Dataset:', DATA_DIR); print('Device:', device)"
+python -m phishing_detector.cli train
+```
+
+The current defaults run two epochs with batch size 32. CPU training may take a long time; this is an initial experiment. The pretrained ResNet backbone may download on first use. Best weights are saved at `src/phishing_detector/.cache/models/model.pth`. The trainer also evaluates its best checkpoint on the test split and saves results. If S3 is configured, the current trainer uploads the model and results at the end, potentially replacing the configured model key; choose a new versioned key before training when preserving an existing artifact matters.
+
+Restart Uvicorn after training to load the new weights. This dataset consists of website screenshot files; assess performance on held-out mobile message screenshots separately before interpreting image-model outputs for that use case. Class counts alone do not establish label quality or absence of duplicate screenshots across splits.
