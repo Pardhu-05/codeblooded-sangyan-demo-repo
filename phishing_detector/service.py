@@ -1,9 +1,7 @@
 """Orchestration: one OCR pass, independent detectors, one response."""
 
-import json
 import logging
 import os
-from pathlib import Path
 from uuid import uuid4
 
 from .detectors import (
@@ -11,33 +9,20 @@ from .detectors import (
     Finding,
     blocklist_detector,
     brand_detector,
-    hostname,
     text_detector,
     url_detector,
 )
-from .entities import extract_entities, normalize_entity
+from .entities import extract_entities
 from .fusion import fuse
-
-
-def load_settings():
-    path = os.getenv("DETECTION_CONFIG")
-    settings = json.loads(Path(path).read_text(encoding="utf-8")) if path else {}
-    settings["brands"] = {
-        name.lower(): [hostname(d) for d in domains]
-        for name, domains in settings.get("brands", {}).items()
-    }
-    for entry in settings.get("blocklist", []):
-        entry["value"] = (
-            hostname(entry["value"])
-            if entry["type"] == "domain"
-            else normalize_entity(entry["type"], entry["value"])
-        )
-    return settings
+from .progress import pipeline_stage
+from .reputation import detect_reputation
+from .settings import load_settings, validate_settings
 
 
 def analyze_text(text, tokens=None, settings=None, extra_detections=()):
     tokens = tokens or []
-    settings = load_settings() if settings is None else settings
+    pipeline_stage(2, "Extract entities")
+    settings = load_settings() if settings is None else validate_settings(settings)
     brands = settings.get("brands", {})
     entities = extract_entities(text, tokens)
     import re
@@ -67,6 +52,7 @@ def analyze_text(text, tokens=None, settings=None, extra_detections=()):
                         ),
                     }
                 )
+    pipeline_stage(3, "Run independent detectors")
     detections = [
         url_detector(
             entities,
@@ -88,12 +74,16 @@ def analyze_text(text, tokens=None, settings=None, extra_detections=()):
         for finding in text_detection.findings:
             finding.score *= trust
     detections.append(text_detection)
+    from .url_ml import detect as detect_urls
+
+    detections.append(detect_urls(entities, os.getenv("URL_MODEL_PATH")))
     detections.extend(extra_detections)
+    detections.append(detect_reputation(entities, settings["safe_browsing"]))
     detections.extend(
         Detection(
             name, "not_implemented", detail="External provider integration required"
         )
-        for name in ("rdap", "safe_browsing", "phishtank_openphish")
+        for name in ("rdap", "phishtank_openphish")
     )
     result = {
         "analysis_id": str(uuid4()),
@@ -113,7 +103,16 @@ def analyze_text(text, tokens=None, settings=None, extra_detections=()):
         "detectors": [d.to_dict() for d in detections],
         "score_version": "rules-v1-uncalibrated",
     }
-    result.update(fuse(detections, text, tokens))
+    pipeline_stage(4, "Fuse evidence and build explanation")
+    result.update(fuse(detections, text, tokens, settings["fusion"]))
+    result["coverage"] = {
+        "completed": [d.name for d in detections if d.status == "ok"],
+        "not_completed": [
+            {"name": d.name, "status": d.status, "detail": d.detail}
+            for d in detections
+            if d.status != "ok"
+        ],
+    }
     candidates = [e for e in entities if e["type"] == "url_candidate"]
     result["url_candidates"] = candidates
     if candidates:
@@ -134,14 +133,16 @@ def analyze_text(text, tokens=None, settings=None, extra_detections=()):
     result.update(
         risk_level=result["risk"]["level"], risk_score=result["risk"]["score"]
     )
+    pipeline_stage(5, "Analysis complete")
     return result
 
 
-def analyze_image(src, box=None, langs=("en",), classify="full"):
+def analyze_image(src, box=None, langs=("en",), classify="full", settings=None):
     from .ocr import crop_region, extract_text, load_image
 
     if classify not in ("full", "crop", None):
         raise ValueError("classify must be full, crop, or None")
+    pipeline_stage(1, "Load image and run OCR once")
     image = load_image(src)
     ocr = extract_text(image, box, langs, return_confidence=True)
     detection = Detection("image_classifier", "disabled")
@@ -175,7 +176,9 @@ def analyze_image(src, box=None, langs=("en",), classify="full"):
                 detail="Model could not be loaded or evaluated",
             )
             legacy["warning"] = detection.detail
-    result = analyze_text(ocr["text"], ocr["tokens"], extra_detections=[detection])
+    result = analyze_text(
+        ocr["text"], ocr["tokens"], settings=settings, extra_detections=[detection]
+    )
     result.update(legacy)
     result["urls"] = result["detected_urls"]
     return result

@@ -2,7 +2,7 @@ import base64
 import csv
 import sqlite3
 from io import BytesIO
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -207,9 +207,25 @@ def test_ml_training_and_reload(tmp_path):
         for i in range(20):
             writer.writerow([f"claim prize send OTP urgently {i}", "phishing"])
             writer.writerow([f"meeting agenda lunch project {i}", "legitimate"])
-    report = train(data, artifact)
-    assert report["test_count"] == 10
-    assert detect("send OTP", str(artifact)).status == "ok"
+    model = MagicMock()
+    model.classes_ = ["legitimate", "phishing"]
+    model.predict.side_effect = lambda texts: [
+        "phishing" if "OTP" in text else "legitimate" for text in texts
+    ]
+    model.predict_proba.return_value = [[0.1, 0.9]]
+    with (
+        patch("sklearn.pipeline.make_pipeline", return_value=model),
+        patch(
+            "joblib.dump",
+            side_effect=lambda _model, path: path.write_text("test artifact"),
+        ),
+        patch("phishing_detector.text_ml.load_model", return_value=model),
+    ):
+        report = train(data, artifact)
+        assert report["train_count"] + report["val_count"] + report["test_count"] == 40
+        model.fit.assert_called_once()
+        assert len(model.fit.call_args.args[0]) == report["train_count"]
+        assert detect("send OTP", str(artifact)).status == "ok"
     assert detect("text", str(tmp_path / "missing")).status == "unavailable"
 
 
