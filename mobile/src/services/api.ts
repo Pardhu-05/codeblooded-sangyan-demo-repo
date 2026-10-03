@@ -10,8 +10,10 @@ import {
   getImageJSONString,
 } from "./imageJson";
 
-// Keep this address aligned with the laptop running FastAPI.
-const API_BASE_URL = "http://172.20.10.4:8000";
+// Laptop browser uses the local backend; native devices need the laptop's LAN IP.
+const API_BASE_URL = Platform.OS === "web"
+  ? "http://127.0.0.1:8000"
+  : "http://172.20.10.4:8000";
 
 export async function convertScreenshotToJSON(
   imageUri: string

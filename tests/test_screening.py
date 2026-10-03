@@ -183,7 +183,9 @@ def test_health_and_pasted_text(monkeypatch):
     assert any(e["type"] == "secret_request" for e in result["entities"])
     assert result["risk"]["level"] == "suspicious"
     for text in ("", "   ", "x" * 20001):
-        assert client.post("/api/v1/analyze-text", json={"text": text}).status_code == 422
+        assert (
+            client.post("/api/v1/analyze-text", json={"text": text}).status_code == 422
+        )
 
 
 def test_feedback_is_pending(tmp_path):
@@ -209,3 +211,46 @@ def test_ml_training_and_reload(tmp_path):
     assert report["test_count"] == 10
     assert detect("send OTP", str(artifact)).status == "ok"
     assert detect("text", str(tmp_path / "missing")).status == "unavailable"
+
+
+def test_url_ocr_separators_and_source_spans():
+    for raw, expected in [
+        ("https : / / example . com/Pay", "https://example.com/Pay"),
+        ("httpsll\nexample.com/send?phone=123", "https://example.com/send?phone=123"),
+        (
+            "https://\nexample.com/send?\nphone=123",
+            "https://example.com/send?phone=123",
+        ),
+        ("www . example . technology/Pay", "https://www.example.technology/Pay"),
+    ]:
+        assert find_urls(raw) == [expected]
+        link = next(
+            e for e in extract_entities(raw, token(raw, 0.95)) if e["type"] == "url"
+        )
+        assert raw[link["start"] : link["end"]] == link["value"]
+        assert link["ocr_confidence"] <= 0.7
+
+
+def test_damaged_link_is_evidence_not_guessed_domain():
+    text = "Contact: httpsll\napiwhatsapp comlsend?\nphone-917523823896"
+    result = analyze_text(text, settings={})
+    assert result["detected_urls"] == []
+    assert result["url_candidates"]
+    assert any(
+        s["title"] == "Link could not be read reliably" for s in result["signals"]
+    )
+    assert find_urls("https:// bad.example") == ["https://bad.example"]
+    settings = {"blocklist": [{"type": "domain", "value": "bad.example"}]}
+    assert (
+        analyze_text("httpsll bad.example", settings=settings)["risk"]["level"]
+        != "dangerous"
+    )
+
+
+def test_link_punctuation_and_following_text():
+    assert find_urls("See https://example.com/wiki/Test_(one), then call.") == [
+        "https://example.com/wiki/Test_(one)"
+    ]
+    assert find_urls("https://example.com. This is a sentence.") == [
+        "https://example.com"
+    ]

@@ -105,13 +105,32 @@ def analyze_text(text, tokens=None, settings=None, extra_detections=()):
         "entities": entities,
         "detected_urls": list(
             dict.fromkeys(
-                e["value"] for e in entities if e["type"] in {"url", "domain"}
+                e["normalized"] if e.get("recovered_from_ocr") else e["value"]
+                for e in entities
+                if e["type"] in {"url", "domain"}
             )
         ),
         "detectors": [d.to_dict() for d in detections],
         "score_version": "rules-v1-uncalibrated",
     }
     result.update(fuse(detections, text, tokens))
+    candidates = [e for e in entities if e["type"] == "url_candidate"]
+    result["url_candidates"] = candidates
+    if candidates:
+        warning = {
+            "category": "ocr",
+            "severity": "info",
+            "title": "Link could not be read reliably",
+            "description": "OCR detected a link fragment but could not identify its destination. Check the original image.",
+            "evidence": candidates[0]["value"],
+        }
+        result["signals"] = result["signals"][:2] + [warning]
+        if len(result["signals"]) == 1:
+            result["explanation"] = warning["description"]
+            result["action"] = (
+                "Do not use an unreadable link; verify the destination independently."
+            )
+            result["verification"] = [result["action"]]
     result.update(
         risk_level=result["risk"]["level"], risk_score=result["risk"]["score"]
     )

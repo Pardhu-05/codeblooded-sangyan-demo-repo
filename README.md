@@ -99,3 +99,8 @@ python -m phishing_detector.cli train
 The current defaults run two epochs with batch size 32. CPU training may take a long time; this is an initial experiment. The pretrained ResNet backbone may download on first use. Best weights are saved at `src/phishing_detector/.cache/models/model.pth`. The trainer also evaluates its best checkpoint on the test split and saves results. If S3 is configured, the current trainer uploads the model and results at the end, potentially replacing the configured model key; choose a new versioned key before training when preserving an existing artifact matters.
 
 Restart Uvicorn after training to load the new weights. This dataset consists of website screenshot files; assess performance on held-out mobile message screenshots separately before interpreting image-model outputs for that use case. Class counts alone do not establish label quality or absence of duplicate screenshots across splits.
+
+
+### OCR links
+
+URL extraction can repair whitespace around visible URL separators and a limited set of OCR scheme mistakes such as `httpsll`. Source text and character spans remain unchanged in entities; recovered links carry `recovered_from_ocr` and confidence is capped at 0.7 so they cannot trigger a certain blocklist override. `detected_urls` contains the normalized recovered URL. Missing hostname dots are not inferred: a fragment such as `httpsll apiwhatsapp comlsend?` is exposed in `url_candidates` with an informational review signal. This does not imply the link is malicious or identify its destination. Restart the backend after changing extraction code.
